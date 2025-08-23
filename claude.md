@@ -45,20 +45,30 @@
   - **User Context**: Preferences, workspace memberships, personalization
   - **Global Context**: System configuration, feature flags, defaults
 
+## Current Status: OPERATIONAL ✅
+
+**Service Running**: Port 3005
+**TypeScript Issues**: Fixed ✅ 
+**Frontend Integration**: Complete ✅
+**Onboarding System**: Fully integrated ✅
+
 ## Development Setup
 
 ### Prerequisites
 - Node.js 18+
-- PostgreSQL 14+
-- Redis 6+
-- Supabase account and project
+- PostgreSQL 14+ (or in-memory mode)
+- Redis 6+ (optional - can use in-memory cache)
+- Supabase account and project (or fallback credentials)
 
 ### Environment Configuration
 ```env
 # Core Configuration
 NODE_ENV=development
-PORT=3002
+PORT=3005
 DATABASE_URL=postgresql://user:pass@localhost:5432/cv_context
+# For in-memory development mode
+USE_IN_MEMORY_DB=true
+USE_IN_MEMORY_CACHE=true
 
 # Supabase Integration
 SUPABASE_URL=https://your-project.supabase.co
