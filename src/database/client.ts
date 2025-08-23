@@ -4,13 +4,17 @@ import { DatabaseConfig, CacheConfig } from '../types'
 
 export class DatabaseClient {
   private supabase: SupabaseClient
-  private redis: Redis
+  private redis: Redis | null = null
+  private inMemoryCache: Map<string, any> = new Map()
+  private useInMemoryCache: boolean
   private config: {
     database: DatabaseConfig
     cache: CacheConfig
   }
 
   constructor(supabaseUrl: string, supabaseKey: string, redisConfig: any) {
+    this.useInMemoryCache = process.env.USE_IN_MEMORY_CACHE === 'true'
+    
     this.supabase = createClient(supabaseUrl, supabaseKey, {
       auth: {
         autoRefreshToken: true,
@@ -23,14 +27,17 @@ export class DatabaseClient {
       }
     })
 
-    this.redis = new Redis({
-      host: redisConfig.host || 'localhost',
-      port: redisConfig.port || 6379,
-      password: redisConfig.password,
-      db: redisConfig.db || 0,
-      keyPrefix: 'cv:context:',
-      maxRetriesPerRequest: 3
-    })
+    // Only create Redis connection if not using in-memory cache
+    if (!this.useInMemoryCache) {
+      this.redis = new Redis({
+        host: redisConfig.host || 'localhost',
+        port: redisConfig.port || 6379,
+        password: redisConfig.password,
+        db: redisConfig.db || 0,
+        keyPrefix: 'cv:context:',
+        maxRetriesPerRequest: 3
+      })
+    }
 
     this.config = {
       database: {
@@ -170,13 +177,18 @@ export class DatabaseClient {
     return (data as T[]) || []
   }
 
-  // Redis Cache Operations
+  // Cache Operations (Redis or In-Memory)
   async cacheGet<T>(key: string): Promise<T | null> {
     try {
-      const cached = await this.redis.get(key)
-      if (!cached) return null
-      
-      return JSON.parse(cached) as T
+      if (this.useInMemoryCache) {
+        const cached = this.inMemoryCache.get(key)
+        return cached ? JSON.parse(cached) as T : null
+      } else if (this.redis) {
+        const cached = await this.redis!.get(key)
+        if (!cached) return null
+        return JSON.parse(cached) as T
+      }
+      return null
     } catch (error) {
       console.error('Cache get error:', error)
       return null
@@ -186,10 +198,20 @@ export class DatabaseClient {
   async cacheSet<T>(key: string, value: T, ttl?: number): Promise<void> {
     try {
       const serialized = JSON.stringify(value)
-      if (ttl) {
-        await this.redis.setex(key, ttl, serialized)
-      } else {
-        await this.redis.set(key, serialized)
+      if (this.useInMemoryCache) {
+        this.inMemoryCache.set(key, serialized)
+        // Handle TTL for in-memory cache
+        if (ttl) {
+          setTimeout(() => {
+            this.inMemoryCache.delete(key)
+          }, ttl * 1000)
+        }
+      } else if (this.redis) {
+        if (ttl) {
+          await this.redis!.setex(key, ttl, serialized)
+        } else {
+          await this.redis!.set(key, serialized)
+        }
       }
     } catch (error) {
       console.error('Cache set error:', error)
@@ -199,7 +221,11 @@ export class DatabaseClient {
 
   async cacheDelete(key: string): Promise<void> {
     try {
-      await this.redis.del(key)
+      if (this.useInMemoryCache) {
+        this.inMemoryCache.delete(key)
+      } else if (this.redis) {
+        await this.redis!.del(key)
+      }
     } catch (error) {
       console.error('Cache delete error:', error)
     }
@@ -207,9 +233,18 @@ export class DatabaseClient {
 
   async cacheInvalidatePattern(pattern: string): Promise<void> {
     try {
-      const keys = await this.redis.keys(pattern)
-      if (keys.length > 0) {
-        await this.redis.del(...keys)
+      if (this.useInMemoryCache) {
+        const regex = new RegExp(pattern.replace(/\*/g, '.*'))
+        for (const [key] of this.inMemoryCache) {
+          if (regex.test(key)) {
+            this.inMemoryCache.delete(key)
+          }
+        }
+      } else if (this.redis) {
+        const keys = await this.redis!.keys(pattern)
+        if (keys.length > 0) {
+          await this.redis!.del(...keys)
+        }
       }
     } catch (error) {
       console.error('Cache invalidate error:', error)
@@ -241,8 +276,12 @@ export class DatabaseClient {
 
     // Test cache connection
     try {
-      await this.redis.ping()
-      results.cache = true
+      if (this.useInMemoryCache) {
+        results.cache = true // In-memory cache is always healthy
+      } else if (this.redis) {
+        await this.redis!.ping()
+        results.cache = true
+      }
     } catch (error) {
       console.error('Cache health check failed:', error)
     }
@@ -251,7 +290,12 @@ export class DatabaseClient {
   }
 
   async close(): Promise<void> {
-    await this.redis.quit()
+    if (this.redis) {
+      await this.redis!.quit()
+    }
+    if (this.useInMemoryCache) {
+      this.inMemoryCache.clear()
+    }
   }
 }
 

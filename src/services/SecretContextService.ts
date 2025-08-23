@@ -1,3 +1,4 @@
+import crypto from 'crypto'
 import { DatabaseClient } from '../database/client'
 import { EncryptionService } from '../utils/encryption'
 import { 
@@ -9,10 +10,15 @@ import {
 } from '../types'
 
 export class SecretContextService {
+  private inMemoryStore: Map<string, SecretContext> = new Map()
+  private useInMemoryDB: boolean
+
   constructor(
     private db: DatabaseClient,
     private encryption: EncryptionService
-  ) {}
+  ) {
+    this.useInMemoryDB = process.env.USE_IN_MEMORY_DB === 'true'
+  }
 
   /**
    * Store encrypted API key or credential
@@ -335,6 +341,11 @@ export class SecretContextService {
 
   // Private helper methods
   private async getSecretContext(workspaceId: string, userId: string): Promise<SecretContext | null> {
+    if (this.useInMemoryDB) {
+      const key = `${workspaceId}:${userId}`
+      return this.inMemoryStore.get(key) || null
+    }
+
     // Try cache first
     const cacheKey = this.db.generateCacheKey('secret_context', workspaceId, userId)
     const cached = await this.db.cacheGet<SecretContext>(cacheKey)
@@ -361,6 +372,12 @@ export class SecretContextService {
   }
 
   private async saveSecretContext(secretContext: SecretContext): Promise<void> {
+    if (this.useInMemoryDB) {
+      const key = `${secretContext.workspace_id}:${secretContext.user_id}`
+      this.inMemoryStore.set(key, secretContext)
+      return
+    }
+
     // Encrypt the entire secret context before storing
     const encryptedContext = this.encryption.encryptObject(
       secretContext,
@@ -389,6 +406,11 @@ export class SecretContextService {
   }
 
   private async createAuditLog(logData: Partial<AuditLog>): Promise<void> {
+    if (this.useInMemoryDB) {
+      // Skip audit logging in development mode
+      return
+    }
+
     const auditLog: AuditLog = {
       id: crypto.randomUUID(),
       workspace_id: logData.workspace_id!,
