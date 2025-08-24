@@ -9,6 +9,7 @@ import { EncryptionService } from './utils/encryption'
 import { SecretContextService } from './services/SecretContextService'
 import { UserContextService } from './services/UserContextService'
 import { contextRoutes } from './controllers/contextController'
+import { mcpRoutes } from './mcp/routes'
 
 const PORT = parseInt(process.env.PORT || '3002')
 const HOST = process.env.HOST || '0.0.0.0'
@@ -74,8 +75,11 @@ async function buildServer() {
 
   // Authentication hook
   fastify.addHook('onRequest', async (request, reply) => {
-    // Skip auth for health checks and docs
-    if (request.url === '/health' || request.url === '/docs' || request.url === '/') {
+    // Skip auth for health checks, docs, and MCP endpoints (MCP handles auth internally)
+    if (request.url === '/health' || 
+        request.url === '/docs' || 
+        request.url === '/' ||
+        request.url.startsWith('/api/v1/mcp/')) {
       return
     }
 
@@ -91,7 +95,28 @@ async function buildServer() {
     service: 'cv-context-manager',
     version: '1.0.0',
     status: 'healthy',
-    timestamp: new Date().toISOString()
+    description: 'Three-tier context management system with MCP tool primitives',
+    timestamp: new Date().toISOString(),
+    capabilities: [
+      'Encrypted credential management',
+      'User-specific context and preferences', 
+      'Community knowledge base',
+      'MCP tool primitives for inference loops'
+    ],
+    endpoints: {
+      context_secret: '/api/v1/context/secret',
+      context_user: '/api/v1/context/user',
+      context_global: '/api/v1/context/global',
+      mcp_tools: '/api/v1/mcp/tools',
+      mcp_call: '/api/v1/mcp/call',
+      mcp_health: '/api/v1/mcp/health',
+      health: '/health'
+    },
+    tiers: {
+      secret: 'Encrypted credentials and SSH keys (JWT required)',
+      user: 'User preferences and deployment patterns (JWT required)', 
+      global: 'Community knowledge base (anonymous contributions allowed)'
+    }
   }))
 
   fastify.get('/health', async () => {
@@ -107,6 +132,9 @@ async function buildServer() {
 
   // Context management routes
   await fastify.register(contextRoutes, { prefix: '/api/v1/context' })
+  
+  // MCP routes for tool primitives
+  await fastify.register(mcpRoutes, { prefix: '/api/v1' })
 
   // Error handler
   fastify.setErrorHandler((error, request, reply) => {
