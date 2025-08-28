@@ -11,6 +11,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { z } from 'zod'
 import { ContextManagerMCPServer } from './server'
 import { GlobalContextService } from '../services/GlobalContextService'
+import { DeploymentSessionService } from '../services/DeploymentSessionService'
 
 // Request schemas
 const MCPToolCallSchema = z.object({
@@ -21,12 +22,14 @@ const MCPToolCallSchema = z.object({
 // MCP Routes
 export async function mcpRoutes(fastify: FastifyInstance) {
   
-  // Initialize global context service and MCP server
+  // Initialize services and MCP server
   const globalContextService = new GlobalContextService()
+  const deploymentSessionService = new DeploymentSessionService()
   const contextMCPServer = new ContextManagerMCPServer(
     fastify.secretContextService,
     fastify.userContextService,
-    globalContextService
+    globalContextService,
+    deploymentSessionService
   )
 
   // List available MCP tools

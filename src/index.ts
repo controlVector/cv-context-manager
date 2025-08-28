@@ -75,11 +75,21 @@ async function buildServer() {
 
   // Authentication hook
   fastify.addHook('onRequest', async (request, reply) => {
-    // Skip auth for health checks, docs, and MCP endpoints (MCP handles auth internally)
+    // Skip auth for health checks, docs, MCP endpoints, and ALL endpoints in development mode
     if (request.url === '/health' || 
         request.url === '/docs' || 
         request.url === '/' ||
-        request.url.startsWith('/api/v1/mcp/')) {
+        request.url.startsWith('/api/v1/mcp/') ||
+        (process.env.NODE_ENV === 'development' && process.env.BYPASS_AUTH === 'true')) {
+      
+      // In development mode, inject default user for context services
+      if (process.env.NODE_ENV === 'development' && process.env.BYPASS_AUTH === 'true') {
+        (request as any).user = {
+          user_id: 'dev-user-123',
+          workspace_id: 'dev-workspace-456',
+          email: 'dev@controlvector.io'
+        }
+      }
       return
     }
 

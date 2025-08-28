@@ -5,6 +5,7 @@ import {
   DeploymentPattern, 
   InfrastructureEvent,
   ConversationContext,
+  DeploymentSession,
   UserSettings 
 } from '../types'
 
@@ -389,6 +390,195 @@ export class UserContextService {
     return patterns.slice(0, 5) // Top 5 recommendations
   }
 
+  /**
+   * Deployment session management for persistent dev/op workflows
+   */
+  async createDeploymentSession(
+    workspaceId: string,
+    userId: string,
+    sessionName: string,
+    deploymentContext: DeploymentSession['deployment_context']
+  ): Promise<DeploymentSession> {
+    let userContext = await this.getUserContext(workspaceId, userId)
+    
+    if (!userContext) {
+      userContext = await this.createUserContext(workspaceId, userId)
+    }
+
+    const deploymentSession: DeploymentSession = {
+      id: crypto.randomUUID(),
+      workspace_id: workspaceId,
+      user_id: userId,
+      session_name: sessionName,
+      deployment_context: deploymentContext,
+      active_resources: [],
+      session_state: 'active',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // 7 days
+    }
+
+    if (!userContext.deployment_sessions) {
+      userContext.deployment_sessions = []
+    }
+    userContext.deployment_sessions.push(deploymentSession)
+    
+    // Keep only the most recent 10 active sessions
+    userContext.deployment_sessions = userContext.deployment_sessions
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+      .slice(0, 10)
+
+    userContext.updated_at = new Date().toISOString()
+    await this.saveUserContext(userContext)
+
+    return deploymentSession
+  }
+
+  async updateDeploymentSession(
+    workspaceId: string,
+    userId: string,
+    sessionId: string,
+    updates: Partial<Pick<DeploymentSession, 'deployment_context' | 'active_resources' | 'session_state' | 'metadata'>>
+  ): Promise<DeploymentSession | null> {
+    let userContext = await this.getUserContext(workspaceId, userId)
+    
+    if (!userContext) {
+      return null
+    }
+
+    const sessionIndex = userContext.deployment_sessions?.findIndex(s => s.id === sessionId) ?? -1
+    if (sessionIndex === -1 || !userContext.deployment_sessions) {
+      return null
+    }
+
+    const existingSession = userContext.deployment_sessions[sessionIndex]
+    if (!existingSession) {
+      return null
+    }
+    
+    const updatedSession: DeploymentSession = {
+      id: existingSession.id,
+      workspace_id: existingSession.workspace_id,
+      user_id: existingSession.user_id,
+      session_name: existingSession.session_name,
+      deployment_context: updates.deployment_context || existingSession.deployment_context,
+      active_resources: updates.active_resources || existingSession.active_resources,
+      session_state: updates.session_state || existingSession.session_state,
+      metadata: updates.metadata || existingSession.metadata,
+      created_at: existingSession.created_at,
+      updated_at: new Date().toISOString(),
+      // Extend expiration if session is still active
+      expires_at: updates.session_state === 'active' || existingSession.session_state === 'active'
+        ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+        : existingSession.expires_at
+    }
+
+    userContext.deployment_sessions[sessionIndex] = updatedSession
+    userContext.updated_at = new Date().toISOString()
+    await this.saveUserContext(userContext)
+
+    return updatedSession
+  }
+
+  async getDeploymentSession(
+    workspaceId: string,
+    userId: string,
+    sessionId: string
+  ): Promise<DeploymentSession | null> {
+    const userContext = await this.getUserContext(workspaceId, userId)
+    
+    if (!userContext) {
+      return null
+    }
+
+    return userContext.deployment_sessions?.find(s => s.id === sessionId) || null
+  }
+
+  async getActiveDeploymentSessions(
+    workspaceId: string,
+    userId: string
+  ): Promise<DeploymentSession[]> {
+    const userContext = await this.getUserContext(workspaceId, userId)
+    
+    if (!userContext) {
+      return []
+    }
+
+    const now = new Date().toISOString()
+    
+    return userContext.deployment_sessions
+      ?.filter(session => 
+        session.session_state === 'active' && 
+        session.expires_at > now
+      )
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()) || []
+  }
+
+  async resumeDeploymentSession(
+    workspaceId: string,
+    userId: string,
+    sessionId: string
+  ): Promise<DeploymentSession | null> {
+    const session = await this.getDeploymentSession(workspaceId, userId, sessionId)
+    
+    if (!session) {
+      return null
+    }
+
+    // Check if session is expired
+    if (new Date(session.expires_at) <= new Date()) {
+      return null
+    }
+
+    // Update session state to active if it was paused
+    if (session.session_state === 'paused') {
+      return await this.updateDeploymentSession(workspaceId, userId, sessionId, {
+        session_state: 'active'
+      })
+    }
+
+    return session
+  }
+
+  async pauseDeploymentSession(
+    workspaceId: string,
+    userId: string,
+    sessionId: string
+  ): Promise<DeploymentSession | null> {
+    return await this.updateDeploymentSession(workspaceId, userId, sessionId, {
+      session_state: 'paused'
+    })
+  }
+
+  async cleanupExpiredSessions(
+    workspaceId: string,
+    userId: string
+  ): Promise<number> {
+    let userContext = await this.getUserContext(workspaceId, userId)
+    
+    if (!userContext) {
+      return 0
+    }
+
+    const now = new Date().toISOString()
+    const originalCount = userContext.deployment_sessions?.length || 0
+    
+    if (userContext.deployment_sessions) {
+      userContext.deployment_sessions = userContext.deployment_sessions.filter(session => 
+        session.expires_at > now || session.session_state === 'active'
+      )
+    }
+
+    const cleanedCount = originalCount - (userContext.deployment_sessions?.length || 0)
+    
+    if (cleanedCount > 0) {
+      userContext.updated_at = new Date().toISOString()
+      await this.saveUserContext(userContext)
+    }
+
+    return cleanedCount
+  }
+
   // Private helper methods
   private async createUserContext(workspaceId: string, userId: string): Promise<UserContext> {
     const userContext: UserContext = {
@@ -420,6 +610,7 @@ export class UserContextService {
       deployment_patterns: [],
       infrastructure_history: [],
       conversation_context: [],
+      deployment_sessions: [],
       settings: {
         security: {
           mfa_enabled: false,

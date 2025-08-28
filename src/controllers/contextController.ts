@@ -67,6 +67,14 @@ const RecordInfrastructureEventSchema = z.object({
 // Helper to ensure user is authenticated
 function requireAuth(request: FastifyRequest, reply: FastifyReply): { user_id: string; workspace_id: string } | null {
   try {
+    // Development mode: bypass authentication
+    if (process.env.NODE_ENV === 'development' && process.env.BYPASS_AUTH === 'true') {
+      return {
+        user_id: 'dev-user-123',
+        workspace_id: 'dev-workspace-456'
+      }
+    }
+    
     // Access the JWT user from the request 
     const userData = (request as any).user
     if (!userData || !userData.user_id || !userData.workspace_id) {

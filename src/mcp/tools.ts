@@ -151,6 +151,102 @@ export const RecordInfrastructureEventSchema = z.object({
 })
 
 // =================================
+// SESSION CONTEXT TOOLS (Deployment State) 🔄
+// =================================
+
+export const CreateDeploymentSessionSchema = z.object({
+  deployment_target: z.object({
+    repository_url: z.string().describe("Git repository URL"),
+    branch: z.string().describe("Branch to deploy"),
+    application_name: z.string().describe("Application name"),
+    target_domain: z.string().describe("Target domain for deployment"),
+    framework: z.string().optional().describe("Framework (fastapi, express, django, etc.)")
+  }).describe("Deployment target information"),
+  conversation_id: z.string().optional().describe("Watson conversation ID for context"),
+  workspace_id: z.string().describe("Workspace identifier"),
+  user_id: z.string().describe("User identifier"),
+  jwt_token: z.string().describe("JWT token for authentication")
+})
+
+export const GetDeploymentSessionSchema = z.object({
+  session_id: z.string().describe("Deployment session ID"),
+  jwt_token: z.string().describe("JWT token for authentication")
+})
+
+export const UpdateDeploymentSessionSchema = z.object({
+  session_id: z.string().describe("Deployment session ID"),
+  update: z.object({
+    infrastructure_state: z.object({
+      provider: z.string().optional(),
+      droplet_id: z.string().optional(),
+      droplet_name: z.string().optional(),
+      ip_address: z.string().optional(),
+      region: z.string().optional(),
+      size: z.string().optional(),
+      ssh_key_id: z.string().optional(),
+      ssh_key_name: z.string().optional(),
+      ssh_public_key: z.string().optional(),
+      ssh_connection_established: z.boolean().optional()
+    }).optional().describe("Infrastructure state updates"),
+    dns_state: z.object({
+      provider: z.string().optional(),
+      zone_id: z.string().optional(),
+      record_id: z.string().optional(),
+      domain_configured: z.boolean().optional(),
+      dns_propagated: z.boolean().optional(),
+      ssl_configured: z.boolean().optional(),
+      ssl_provider: z.string().optional(),
+      certificate_id: z.string().optional()
+    }).optional().describe("DNS state updates"),
+    service_state: z.object({
+      application_deployed: z.boolean().optional(),
+      application_running: z.boolean().optional(),
+      nginx_configured: z.boolean().optional(),
+      nginx_running: z.boolean().optional(),
+      firewall_configured: z.boolean().optional(),
+      systemd_service_name: z.string().optional(),
+      application_port: z.number().optional(),
+      public_port: z.number().optional(),
+      health_check_endpoint: z.string().optional(),
+      health_status: z.enum(['healthy', 'unhealthy', 'unknown']).optional()
+    }).optional().describe("Service state updates"),
+    status: z.enum(['planning', 'in_progress', 'completed', 'failed', 'abandoned']).optional(),
+    current_step: z.string().optional(),
+    error_message: z.string().optional(),
+    notes: z.array(z.string()).optional(),
+    metadata: z.record(z.any()).optional()
+  }).describe("Session updates"),
+  jwt_token: z.string().describe("JWT token for authentication")
+})
+
+export const AddDeploymentStepSchema = z.object({
+  session_id: z.string().describe("Deployment session ID"),
+  step_name: z.string().describe("Name of the deployment step"),
+  status: z.enum(['pending', 'in_progress', 'completed', 'failed', 'skipped']).default('pending'),
+  jwt_token: z.string().describe("JWT token for authentication")
+})
+
+export const UpdateDeploymentStepSchema = z.object({
+  session_id: z.string().describe("Deployment session ID"),
+  step_name: z.string().describe("Name of the deployment step"),
+  status: z.enum(['pending', 'in_progress', 'completed', 'failed', 'skipped']),
+  result: z.any().optional().describe("Step execution result"),
+  error_message: z.string().optional().describe("Error message if step failed"),
+  jwt_token: z.string().describe("JWT token for authentication")
+})
+
+export const GetUserSessionsSchema = z.object({
+  user_id: z.string().describe("User identifier"),
+  active_only: z.boolean().default(true).describe("Only return active sessions"),
+  jwt_token: z.string().describe("JWT token for authentication")
+})
+
+export const GetConversationSessionSchema = z.object({
+  conversation_id: z.string().describe("Watson conversation ID"),
+  jwt_token: z.string().describe("JWT token for authentication")
+})
+
+// =================================
 // GLOBAL CONTEXT TOOLS (Tier 3) 🌐
 // =================================
 
@@ -288,6 +384,43 @@ export const CONTEXT_MANAGER_MCP_TOOLS: MCPTool[] = [
     name: 'submit_workflow_pattern',
     description: 'Anonymously contribute working agent workflow patterns',
     inputSchema: SubmitWorkflowPatternSchema
+  },
+  
+  // Session Context Tools (Deployment State) 🔄
+  {
+    name: 'create_deployment_session',
+    description: 'Create a new deployment session to track state across conversation turns',
+    inputSchema: CreateDeploymentSessionSchema
+  },
+  {
+    name: 'get_deployment_session',
+    description: 'Retrieve current deployment session context',
+    inputSchema: GetDeploymentSessionSchema
+  },
+  {
+    name: 'update_deployment_session',
+    description: 'Update deployment session with infrastructure, DNS, or service state',
+    inputSchema: UpdateDeploymentSessionSchema
+  },
+  {
+    name: 'add_deployment_step',
+    description: 'Add a new step to the deployment workflow',
+    inputSchema: AddDeploymentStepSchema
+  },
+  {
+    name: 'update_deployment_step',
+    description: 'Update the status of a deployment step',
+    inputSchema: UpdateDeploymentStepSchema
+  },
+  {
+    name: 'get_user_sessions',
+    description: 'Get all deployment sessions for a user',
+    inputSchema: GetUserSessionsSchema
+  },
+  {
+    name: 'get_conversation_session',
+    description: 'Get the active deployment session for a conversation',
+    inputSchema: GetConversationSessionSchema
   }
 ]
 

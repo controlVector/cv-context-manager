@@ -59,6 +59,7 @@ export interface UserContext {
   deployment_patterns: DeploymentPattern[]
   infrastructure_history: InfrastructureEvent[]
   conversation_context: ConversationContext[]
+  deployment_sessions?: DeploymentSession[]
   settings: UserSettings
   created_at: string
   updated_at: string
@@ -131,6 +132,42 @@ export interface ConversationContext {
     resources_affected: string[]
   }
   timestamp: string
+}
+
+export interface DeploymentSession {
+  id: string
+  workspace_id: string
+  user_id: string
+  session_name: string
+  deployment_context: {
+    target_repository?: string
+    deployment_config?: any
+    infrastructure_requirements?: any
+    domain_config?: any
+    current_step?: string
+    progress_status?: 'initializing' | 'provisioning' | 'configuring' | 'deploying' | 'completed' | 'failed'
+    error_context?: string
+    last_prompt?: string
+    next_suggested_action?: string
+  }
+  active_resources: Array<{
+    provider: string
+    resource_type: string
+    resource_id: string
+    resource_name: string
+    status: string
+    estimated_cost?: number
+    created_at: string
+  }>
+  session_state: 'active' | 'paused' | 'completed' | 'failed'
+  created_at: string
+  updated_at: string
+  expires_at: string
+  metadata?: {
+    cli_poc_patterns?: string[]
+    watson_conversation_id?: string
+    user_preferences?: any
+  }
 }
 
 export interface UserSettings {

@@ -10,6 +10,7 @@
 import { SecretContextService } from '../services/SecretContextService'
 import { UserContextService } from '../services/UserContextService'
 import { GlobalContextService } from '../services/GlobalContextService'
+import { DeploymentSessionService } from '../services/DeploymentSessionService'
 import { 
   CONTEXT_MANAGER_MCP_TOOLS, 
   validateMCPToolInput, 
@@ -28,22 +29,32 @@ import {
   SubmitCommunityPatternSchema,
   GetCommunityPatternsSchema,
   GetRecommendedStackSchema,
-  SubmitWorkflowPatternSchema
+  SubmitWorkflowPatternSchema,
+  CreateDeploymentSessionSchema,
+  GetDeploymentSessionSchema,
+  UpdateDeploymentSessionSchema,
+  AddDeploymentStepSchema,
+  UpdateDeploymentStepSchema,
+  GetUserSessionsSchema,
+  GetConversationSessionSchema
 } from './tools'
 
 export class ContextManagerMCPServer {
   private secretContextService: SecretContextService
   private userContextService: UserContextService
   private globalContextService: GlobalContextService
+  private deploymentSessionService: DeploymentSessionService
 
   constructor(
     secretContextService: SecretContextService,
     userContextService: UserContextService,
-    globalContextService: GlobalContextService
+    globalContextService: GlobalContextService,
+    deploymentSessionService?: DeploymentSessionService
   ) {
     this.secretContextService = secretContextService
     this.userContextService = userContextService
     this.globalContextService = globalContextService
+    this.deploymentSessionService = deploymentSessionService || new DeploymentSessionService()
   }
 
   /**
@@ -98,6 +109,22 @@ export class ContextManagerMCPServer {
           return await this.getRecommendedStack(input)
         case 'submit_workflow_pattern':
           return await this.submitWorkflowPattern(input)
+        
+        // Session Context Tools (Deployment State) 🔄
+        case 'create_deployment_session':
+          return await this.createDeploymentSession(input)
+        case 'get_deployment_session':
+          return await this.getDeploymentSession(input)
+        case 'update_deployment_session':
+          return await this.updateDeploymentSession(input)
+        case 'add_deployment_step':
+          return await this.addDeploymentStep(input)
+        case 'update_deployment_step':
+          return await this.updateDeploymentStep(input)
+        case 'get_user_sessions':
+          return await this.getUserSessions(input)
+        case 'get_conversation_session':
+          return await this.getConversationSession(input)
         
         default:
           return createMCPResult(`Unknown tool: ${toolName}`, true)
@@ -482,6 +509,188 @@ export class ContextManagerMCPServer {
       )
     } catch (error) {
       return createMCPResult(`Failed to submit workflow: ${error instanceof Error ? error.message : 'Unknown error'}`, true)
+    }
+  }
+
+  // =================================
+  // SESSION CONTEXT TOOLS (Deployment State) 🔄
+  // =================================
+
+  private async createDeploymentSession(input: unknown): Promise<MCPToolResult> {
+    const tool = CONTEXT_MANAGER_MCP_TOOLS.find(t => t.name === 'create_deployment_session')!
+    const params = validateMCPToolInput<typeof CreateDeploymentSessionSchema._type>(tool, input)
+
+    try {
+      const session = await this.deploymentSessionService.createSession(
+        params.user_id,
+        params.workspace_id,
+        params.deployment_target,
+        params.conversation_id
+      )
+
+      return createMCPResult(
+        `Deployment session created successfully.\n` +
+        `Session ID: ${session.session_id}\n` +
+        `Target: ${session.deployment_target.target_domain}\n` +
+        `Repository: ${session.deployment_target.repository_url}\n` +
+        `Branch: ${session.deployment_target.branch}\n` +
+        `Application: ${session.deployment_target.application_name}\n` +
+        `Status: ${session.status}\n` +
+        `Expires: ${session.expires_at?.toISOString() || 'Never'}`
+      )
+    } catch (error) {
+      return createMCPResult(`Failed to create deployment session: ${error instanceof Error ? error.message : 'Unknown error'}`, true)
+    }
+  }
+
+  private async getDeploymentSession(input: unknown): Promise<MCPToolResult> {
+    const tool = CONTEXT_MANAGER_MCP_TOOLS.find(t => t.name === 'get_deployment_session')!
+    const params = validateMCPToolInput<typeof GetDeploymentSessionSchema._type>(tool, input)
+
+    try {
+      const session = await this.deploymentSessionService.getSession(params.session_id)
+      
+      if (!session) {
+        return createMCPResult('Deployment session not found or expired', true)
+      }
+
+      const summary = this.deploymentSessionService.getSessionSummary(session)
+      const stepsInfo = session.deployment_steps.map(step => 
+        `  - ${step.step_name}: ${step.status}${step.error_message ? ` (Error: ${step.error_message})` : ''}`
+      ).join('\n')
+
+      return createMCPResult(
+        `${summary}\n\n` +
+        `Infrastructure:\n` +
+        `  Provider: ${session.infrastructure_state.provider}\n` +
+        `  Droplet: ${session.infrastructure_state.droplet_name || 'Not created'}\n` +
+        `  IP: ${session.infrastructure_state.ip_address || 'Pending'}\n` +
+        `  SSH Key: ${session.infrastructure_state.ssh_key_name || 'Not configured'}\n\n` +
+        `DNS:\n` +
+        `  Provider: ${session.dns_state.provider}\n` +
+        `  Domain Configured: ${session.dns_state.domain_configured ? 'Yes' : 'No'}\n` +
+        `  SSL: ${session.dns_state.ssl_configured ? 'Yes' : 'No'}\n\n` +
+        `Service:\n` +
+        `  Application Deployed: ${session.service_state.application_deployed ? 'Yes' : 'No'}\n` +
+        `  Application Running: ${session.service_state.application_running ? 'Yes' : 'No'}\n` +
+        `  Port: ${session.service_state.application_port || 'Not configured'}\n\n` +
+        `Deployment Steps:\n${stepsInfo || '  No steps recorded'}\n\n` +
+        `Current Step: ${session.current_step || 'None'}\n` +
+        `Errors: ${session.error_count}${session.last_error ? ` (Last: ${session.last_error})` : ''}`
+      )
+    } catch (error) {
+      return createMCPResult(`Failed to get deployment session: ${error instanceof Error ? error.message : 'Unknown error'}`, true)
+    }
+  }
+
+  private async updateDeploymentSession(input: unknown): Promise<MCPToolResult> {
+    const tool = CONTEXT_MANAGER_MCP_TOOLS.find(t => t.name === 'update_deployment_session')!
+    const params = validateMCPToolInput<typeof UpdateDeploymentSessionSchema._type>(tool, input)
+
+    try {
+      const session = await this.deploymentSessionService.updateSession(params.session_id, params.update)
+      
+      if (!session) {
+        return createMCPResult('Deployment session not found or expired', true)
+      }
+
+      const summary = this.deploymentSessionService.getSessionSummary(session)
+      return createMCPResult(
+        `Deployment session updated successfully.\n\n${summary}`
+      )
+    } catch (error) {
+      return createMCPResult(`Failed to update deployment session: ${error instanceof Error ? error.message : 'Unknown error'}`, true)
+    }
+  }
+
+  private async addDeploymentStep(input: unknown): Promise<MCPToolResult> {
+    const tool = CONTEXT_MANAGER_MCP_TOOLS.find(t => t.name === 'add_deployment_step')!
+    const params = validateMCPToolInput<typeof AddDeploymentStepSchema._type>(tool, input)
+
+    try {
+      await this.deploymentSessionService.addDeploymentStep(
+        params.session_id,
+        params.step_name,
+        params.status
+      )
+
+      return createMCPResult(
+        `Deployment step added successfully.\n` +
+        `Step: ${params.step_name}\n` +
+        `Status: ${params.status}`
+      )
+    } catch (error) {
+      return createMCPResult(`Failed to add deployment step: ${error instanceof Error ? error.message : 'Unknown error'}`, true)
+    }
+  }
+
+  private async updateDeploymentStep(input: unknown): Promise<MCPToolResult> {
+    const tool = CONTEXT_MANAGER_MCP_TOOLS.find(t => t.name === 'update_deployment_step')!
+    const params = validateMCPToolInput<typeof UpdateDeploymentStepSchema._type>(tool, input)
+
+    try {
+      await this.deploymentSessionService.updateDeploymentStep(
+        params.session_id,
+        params.step_name,
+        params.status,
+        params.result,
+        params.error_message
+      )
+
+      return createMCPResult(
+        `Deployment step updated successfully.\n` +
+        `Step: ${params.step_name}\n` +
+        `Status: ${params.status}` +
+        (params.error_message ? `\nError: ${params.error_message}` : '')
+      )
+    } catch (error) {
+      return createMCPResult(`Failed to update deployment step: ${error instanceof Error ? error.message : 'Unknown error'}`, true)
+    }
+  }
+
+  private async getUserSessions(input: unknown): Promise<MCPToolResult> {
+    const tool = CONTEXT_MANAGER_MCP_TOOLS.find(t => t.name === 'get_user_sessions')!
+    const params = validateMCPToolInput<typeof GetUserSessionsSchema._type>(tool, input)
+
+    try {
+      const sessions = await this.deploymentSessionService.getUserSessions(
+        params.user_id,
+        params.active_only
+      )
+
+      if (sessions.length === 0) {
+        return createMCPResult('No deployment sessions found for user')
+      }
+
+      const sessionsInfo = sessions.map(session => 
+        `${session.session_id}: ${session.deployment_target.target_domain} (${session.status}) - Updated: ${session.updated_at.toISOString()}`
+      ).join('\n')
+
+      return createMCPResult(
+        `User deployment sessions (${sessions.length}):\n${sessionsInfo}`
+      )
+    } catch (error) {
+      return createMCPResult(`Failed to get user sessions: ${error instanceof Error ? error.message : 'Unknown error'}`, true)
+    }
+  }
+
+  private async getConversationSession(input: unknown): Promise<MCPToolResult> {
+    const tool = CONTEXT_MANAGER_MCP_TOOLS.find(t => t.name === 'get_conversation_session')!
+    const params = validateMCPToolInput<typeof GetConversationSessionSchema._type>(tool, input)
+
+    try {
+      const session = await this.deploymentSessionService.getConversationSession(params.conversation_id)
+      
+      if (!session) {
+        return createMCPResult('No active deployment session found for this conversation')
+      }
+
+      const summary = this.deploymentSessionService.getSessionSummary(session)
+      return createMCPResult(
+        `Active deployment session for conversation:\n\n${summary}\n\nSession ID: ${session.session_id}`
+      )
+    } catch (error) {
+      return createMCPResult(`Failed to get conversation session: ${error instanceof Error ? error.message : 'Unknown error'}`, true)
     }
   }
 }
